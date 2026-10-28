@@ -4,6 +4,7 @@ export type GlucoseUnit = "mgdl" | "mmoll";
 const MGDL_PER_MMOLL = 18.016;
 
 export const GLUCOSE_UNIT_STORAGE_KEY = "meditrack-glucose-unit";
+export const PROFILE_NAME_STORAGE_KEY = "meditrack-profile-name";
 
 export function isGlucoseUnit(value: string | null): value is GlucoseUnit {
   return value === "mgdl" || value === "mmoll";

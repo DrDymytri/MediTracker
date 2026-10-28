@@ -9,7 +9,7 @@ import { searchFoods as searchFoodDatabase } from "@/lib/foods";
 import { createEvent, deleteEvent, exportBackup, importBackup, listEvents, requestPersistentStorage } from "@/lib/store";
 import { estimateExerciseEnergy, estimateExerciseGlucoseImpact, exerciseHypoglycemiaCaution, preExerciseGuidance } from "@/lib/exercise";
 import { estimateMealGlucoseImpact, forecastGlucoseRisk, projectPostMealTrajectory } from "@/lib/predictive";
-import { GLUCOSE_UNIT_STORAGE_KEY, displayToKg, displayToMgDl, displayToMl, glucoseBounds, glucoseUnitLabel, isGlucoseUnit, kgToDisplay, mgDlToDisplay, mlToDisplay, volumeBounds, volumeUnitLabel, weightBounds, weightUnitLabel, type GlucoseUnit } from "@/lib/units";
+import { GLUCOSE_UNIT_STORAGE_KEY, PROFILE_NAME_STORAGE_KEY, displayToKg, displayToMgDl, displayToMl, glucoseBounds, glucoseUnitLabel, isGlucoseUnit, kgToDisplay, mgDlToDisplay, mlToDisplay, volumeBounds, volumeUnitLabel, weightBounds, weightUnitLabel, type GlucoseUnit } from "@/lib/units";
 import type { EventKind, ExerciseIntensity, ExerciseType, FoodResult, GlucoseContext, HealthEvent, MealItem } from "@/lib/types";
 
 interface ChartPoint {
@@ -335,6 +335,9 @@ export default function Dashboard() {
   const [logKind, setLogKind] = useState<EventKind | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [unit, setUnit] = useState<GlucoseUnit>("mgdl");
+  const [name, setName] = useState("");
+  const displayName = name.trim();
+  const initials = displayName ? displayName.split(/\s+/).slice(0, 2).map((part) => part[0].toUpperCase()).join("") : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -390,7 +393,14 @@ export default function Dashboard() {
     const stored = localStorage.getItem(GLUCOSE_UNIT_STORAGE_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- restores a persisted client-only preference after the server-rendered default mounts
     if (isGlucoseUnit(stored)) setUnit(stored);
+    setName(localStorage.getItem(PROFILE_NAME_STORAGE_KEY) ?? "");
   }, []);
+
+  function updateName(value: string) {
+    const next = value.slice(0, 40);
+    setName(next);
+    localStorage.setItem(PROFILE_NAME_STORAGE_KEY, next);
+  }
 
   function selectUnit(nextUnit: GlucoseUnit) {
     setUnit(nextUnit);
@@ -520,9 +530,9 @@ export default function Dashboard() {
   if (!loaded) return <div className="app-loading" role="status">Opening your private health record…</div>;
 
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><span><HeartPulse size={22} /></span><strong>MediTrack</strong></div><nav aria-label="Primary"><a className="active" href="#overview"><LayoutDashboard size={19} />Overview</a><a href="#glucose"><Activity size={19} />Glucose</a><a href="#nutrition"><Apple size={19} />Nutrition</a><a href="#hydration"><Droplets size={19} />Hydration</a><a href="#exercise"><Dumbbell size={19} />Exercise</a><a href="#" onClick={(event) => { event.preventDefault(); setShowHistory(true); }}><HistoryIcon size={19} />History</a></nav><div className="unit-toggle" role="group" aria-label="Glucose units"><button type="button" className={unit === "mgdl" ? "active" : ""} onClick={() => selectUnit("mgdl")}>mg/dL (US)</button><button type="button" className={unit === "mmoll" ? "active" : ""} onClick={() => selectUnit("mmoll")}>mmol/L (UK)</button></div><div className="sidebar-note"><ShieldCheck size={20} /><div><strong>Private by design</strong><p>Records stay in your local database.</p></div></div><div className="profile"><span>WA</span><div><strong>Wayne</strong><small>Patient profile</small></div></div></aside>
+    <aside className="sidebar"><div className="brand"><span><HeartPulse size={22} /></span><strong>MediTrack</strong></div><nav aria-label="Primary"><a className="active" href="#overview"><LayoutDashboard size={19} />Overview</a><a href="#glucose"><Activity size={19} />Glucose</a><a href="#nutrition"><Apple size={19} />Nutrition</a><a href="#hydration"><Droplets size={19} />Hydration</a><a href="#exercise"><Dumbbell size={19} />Exercise</a><a href="#" onClick={(event) => { event.preventDefault(); setShowHistory(true); }}><HistoryIcon size={19} />History</a></nav><div className="unit-toggle" role="group" aria-label="Glucose units"><button type="button" className={unit === "mgdl" ? "active" : ""} onClick={() => selectUnit("mgdl")}>mg/dL (US)</button><button type="button" className={unit === "mmoll" ? "active" : ""} onClick={() => selectUnit("mmoll")}>mmol/L (UK)</button></div><div className="sidebar-note"><ShieldCheck size={20} /><div><strong>Private by design</strong><p>Records stay in your local database.</p></div></div>{displayName && <div className="profile"><span>{initials}</span><div><strong>{displayName}</strong><small>Patient profile</small></div></div>}</aside>
     <main className="main-content" id="overview">
-      <header className="topbar"><div><p>{format(new Date(), "EEEE, MMMM d")}</p><h1>Today’s health picture</h1></div><button className="button primary" onClick={() => setLogKind("glucose")}><Plus size={18} />Add reading</button></header>
+      <header className="topbar"><div><p>{format(new Date(), "EEEE, MMMM d")}{displayName && ` · Hi, ${displayName}`}</p><h1>Today’s health picture</h1></div><button className="button primary" onClick={() => setLogKind("glucose")}><Plus size={18} />Add reading</button></header>
       {storageError && <section className="urgent-banner"><AlertTriangle size={22} /><div><strong>Storage unavailable</strong><p>{storageError}</p></div></section>}
       {latestAssessment?.level === "urgent" && <section className="urgent-banner"><AlertTriangle size={22} /><div><strong>{latestAssessment.label}: {formatGlucose(latestGlucose.glucoseMgDl, unit)} {glucoseUnitLabel(unit)}</strong><p>{latestAssessment.guidance}</p></div></section>}
       <section className="metric-grid" aria-label="Daily health summary">
@@ -551,7 +561,7 @@ export default function Dashboard() {
         </div> : <div className="predicted-card empty"><p>Log a workout to see its estimated calorie burn and glucose connection here.</p></div>}
       </section>
       <section className="recent-section" id="nutrition"><div className="section-heading"><div><span className="eyebrow">Context builds insight</span><h2>Recent records</h2></div><div className="section-actions"><span className="record-count">{formatNumeric(events.length)} records</span><button type="button" className="button secondary small" onClick={() => setShowHistory(true)}><HistoryIcon size={15} />View all</button></div></div><div className="event-list">{events.slice(0, 8).map((event) => { const assessment = event.kind === "glucose" ? assessGlucose(event.glucoseMgDl!, event.glucoseContext, unit) : isGlucoseImpactIntake(event) ? assessMeal(event) : null; return <article key={event.id}><EventIcon kind={event.kind} /><div className="event-main"><strong>{eventTitle(event)}</strong><small>{eventDescription(event)}</small></div>{assessment && <StatusPill level={assessment.level} label={assessment.label} />}<time>{format(parseISO(event.recordedAt), isToday(parseISO(event.recordedAt)) ? "h:mm a" : "MMM d, h:mm a")}</time><button type="button" className="icon-button danger" onClick={() => removeEvent(event.id)} aria-label="Delete record"><Trash2 size={15} /></button></article>; })}</div></section>
-      <section className="backup-section" id="backup"><div><h2>Your data stays on this phone</h2><p>Records are stored only in this device&apos;s local database and are never uploaded. Back them up regularly: deleting the app or clearing Safari data erases them.</p>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}</div><div className="backup-actions"><button type="button" className="button secondary small" onClick={downloadBackup}><Download size={15} />Back up</button><label className="button secondary small"><Upload size={15} />Restore<input type="file" accept="application/json,.json" onChange={restoreBackup} hidden /></label></div></section>
+      <section className="backup-section" id="backup"><div><h2>Your data stays on this phone</h2><p>Records are stored only in this device&apos;s local database and are never uploaded. Back them up regularly: deleting the app or clearing Safari data erases them.</p>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<label className="name-field">Your name (optional, stays on this phone)<input type="text" value={name} maxLength={40} autoComplete="given-name" onChange={(event) => updateName(event.target.value)} /></label></div><div className="backup-actions"><button type="button" className="button secondary small" onClick={downloadBackup}><Download size={15} />Back up</button><label className="button secondary small"><Upload size={15} />Restore<input type="file" accept="application/json,.json" onChange={restoreBackup} hidden /></label></div></section>
       <footer><p>MediTrack supports informed conversations with your care team. It does not diagnose, prescribe insulin, or replace emergency care.</p><p>Nutrition source: U.S. Department of Agriculture, Agricultural Research Service, FoodData Central.</p></footer>
     </main>
     {logKind && <LogPanel kind={logKind} unit={unit} onClose={() => setLogKind(null)} onSaved={(event) => setEvents((current) => [event, ...current])} />}
