@@ -4,28 +4,32 @@ import type { HealthEvent } from "./types";
 // All records live in this browser-managed IndexedDB database on the device itself.
 const DB_NAME = "meditrack";
 const STORE = "health_events";
+const SNAPSHOT_STORE = "snapshots";
 const RETENTION_MONTHS = 6;
+const MAX_SNAPSHOTS = 30;
+const SNAPSHOT_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) {
         const store = db.createObjectStore(STORE, { keyPath: "id", autoIncrement: true });
         store.createIndex("recordedAt", "recordedAt");
       }
+      if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) db.createObjectStore(SNAPSHOT_STORE, { keyPath: "id", autoIncrement: true });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Unable to open the local database."));
   });
 }
 
-async function run<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
+async function run<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T> | void, storeName = STORE): Promise<T | undefined> {
   const db = await open();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const request = action(tx.objectStore(STORE));
+    const tx = db.transaction(storeName, mode);
+    const request = action(tx.objectStore(storeName));
     tx.oncomplete = () => { db.close(); resolve(request ? request.result : undefined); };
     tx.onerror = tx.onabort = () => { db.close(); reject(tx.error ?? new Error("Local database error.")); };
   });
@@ -52,11 +56,40 @@ export async function createEvent(input: unknown): Promise<HealthEvent> {
   if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid entry.");
   const data: EventInput = parsed.data;
   const id = await run("readwrite", (store) => store.add(data)) as IDBValidKey;
+  void takeSnapshot(SNAPSHOT_MIN_INTERVAL_MS).catch(() => undefined);
   return { ...data, id: Number(id) };
 }
 
 export async function deleteEvent(id: number): Promise<void> {
+  // Snapshot first so an accidental delete can be undone from a restore point.
+  await takeSnapshot().catch(() => undefined);
   await run("readwrite", (store) => { store.delete(id); });
+}
+
+export interface RestorePoint { id: number; createdAt: string; count: number }
+
+// Automatic restore points: newest first, at most MAX_SNAPSHOTS kept. Skipped if a recent one exists.
+export async function takeSnapshot(minIntervalMs = 0): Promise<void> {
+  const [latest] = await listRestorePoints();
+  if (latest && Date.now() - new Date(latest.createdAt).getTime() < minIntervalMs) return;
+  const events = await listEvents();
+  if (events.length === 0) return;
+  const data = JSON.stringify({ app: "MediTrack", version: 1, events });
+  await run("readwrite", (store) => store.add({ createdAt: new Date().toISOString(), count: events.length, data }), SNAPSHOT_STORE);
+  const all = await listRestorePoints();
+  const extra = all.slice(MAX_SNAPSHOTS);
+  if (extra.length) await run("readwrite", (store) => { extra.forEach((point) => store.delete(point.id)); }, SNAPSHOT_STORE);
+}
+
+export async function listRestorePoints(): Promise<RestorePoint[]> {
+  const all = (await run("readonly", (store) => store.getAll(), SNAPSHOT_STORE)) as Array<RestorePoint & { data: string }> | undefined;
+  return (all ?? []).map(({ id, createdAt, count }) => ({ id, createdAt, count })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function restoreFromPoint(id: number): Promise<number> {
+  const point = (await run("readonly", (store) => store.get(id), SNAPSHOT_STORE)) as { data: string } | undefined;
+  if (!point) throw new Error("That restore point no longer exists.");
+  return importBackup(point.data);
 }
 
 export async function exportBackup(): Promise<string> {
